@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Eyeglass Color Extractor</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 20px; color: #222; }
+  h1 { font-size: 22px; }
+  input[type=text] { width: 100%; padding: 10px; font-size: 15px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 6px; }
+  button { margin-top: 10px; padding: 10px 18px; background: #222; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .swatch-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #eee; }
+  .swatch { width: 36px; height: 36px; border-radius: 6px; border: 1px solid #ddd; flex-shrink: 0; }
+  .label { font-weight: 600; font-size: 14px; }
+  .meta { font-size: 12px; color: #888; }
+  .note { font-size: 13px; color: #a05a00; background: #fff7e6; padding: 8px 10px; border-radius: 6px; margin-top: 4px; }
+  #error { color: #b00020; margin-top: 12px; }
+  #diag { font-size: 12px; color: #999; margin-top: 16px; }
+  .tabs { display: flex; gap: 6px; margin: 18px 0 14px; }
+  .tab-btn { padding: 8px 14px; border: 1px solid #ddd; background: #f7f7f7; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  .tab-btn.active { background: #222; color: #fff; border-color: #222; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+  table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 13px; }
+  th, td { border: 1px solid #eee; padding: 6px 8px; text-align: left; }
+  th { background: #fafafa; }
+  .hexcell { display: inline-flex; align-items: center; gap: 6px; }
+  .hexdot { width: 14px; height: 14px; border-radius: 3px; border: 1px solid #ccc; display: inline-block; }
+  #exportBtn { margin-top: 12px; background: #2a6b3c; }
+</style>
+</head>
+<body>
+  <h1>Eyeglass Color Extractor</h1>
+  <p style="color:#666; font-size:14px;">
+    Segmentation is heuristic (background removal + lens isolation + color
+    clustering), not a trained "eyewear parts" model — see the README for
+    what that means for accuracy on hard frames.
+  </p>
+
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="single-url">Single URL</button>
+    <button class="tab-btn" data-tab="single-file">Upload Image</button>
+    <button class="tab-btn" data-tab="bulk">Bulk Import (CDN URL list)</button>
+  </div>
+
+  <div class="panel active" id="single-url">
+    <input type="text" id="url" placeholder="https://example.com/glasses.jpg">
+    <button id="go">Extract Colors</button>
+  </div>
+
+  <div class="panel" id="single-file">
+    <input type="file" id="imgFile" accept="image/*">
+    <button id="goFile">Extract Colors</button>
+  </div>
+
+  <div class="panel" id="bulk">
+    <p style="font-size:13px; color:#666; margin-top:0;">
+      Upload a .csv or .txt file with one CDN image URL per line (or a CSV
+      with a URL in any column). Each image becomes one row; up to 40 URLs
+      per file.
+    </p>
+    <input type="file" id="bulkFile" accept=".csv,.txt">
+    <button id="goBulk">Process All</button>
+    <button id="exportBtn" style="display:none;">Export to CSV</button>
+    <div id="bulkTableWrap"></div>
+  </div>
+
+  <div id="error"></div>
+  <div id="results"></div>
+  <div id="diag"></div>
+
+<script>
+// --- tab switching ---
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(btn.dataset.tab).classList.add('active');
+    document.getElementById('error').textContent = '';
+    document.getElementById('results').innerHTML = '';
+    document.getElementById('diag').textContent = '';
+  });
+});
+
+function renderColorRows(colors) {
+  const resultsEl = document.getElementById('results');
+  resultsEl.innerHTML = '';
+  colors.forEach(c => {
+    const row = document.createElement('div');
+    row.className = 'swatch-row';
+    const sw = document.createElement('div');
+    sw.className = 'swatch';
+    sw.style.background = c.hex || '#f0f0f0';
+    const info = document.createElement('div');
+    let html = `<div class="label">${c.label}</div>`;
+    if (c.hex) {
+      html += `<div class="meta">${c.hex} &middot; ${c.rgb} &middot; ${c.percentage}% of region`;
+      if (c.cluster_tightness !== undefined && c.cluster_tightness !== null) {
+        html += ` &middot; tightness ${c.cluster_tightness}`;
+      }
+      html += `</div>`;
+    } else {
+      html += `<div class="note">${c.note || 'Not detected.'}</div>`;
+    }
+    info.innerHTML = html;
+    row.appendChild(sw);
+    row.appendChild(info);
+    resultsEl.appendChild(row);
+  });
+}
+
+// --- single image upload ---
+document.getElementById('goFile').addEventListener('click', async () => {
+  const fileInput = document.getElementById('imgFile');
+  const errorEl = document.getElementById('error');
+  const diagEl = document.getElementById('diag');
+  errorEl.textContent = '';
+  diagEl.textContent = '';
+  if (!fileInput.files.length) { errorEl.textContent = 'Choose an image file.'; return; }
+
+  const btn = document.getElementById('goFile');
+  btn.disabled = true;
+  btn.textContent = 'Extracting...';
+
+  try {
+    const fd = new FormData();
+    fd.append('image', fileInput.files[0]);
+    const resp = await fetch('/extract_file', { method: 'POST', body: fd });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Extraction failed');
+    renderColorRows(data.colors);
+    diagEl.textContent = `Image: ${data.dimensions} · rembg available: ${data.meta.rembg_used} · lens region found: ${data.meta.lens_region_detected}`;
+  } catch (e) {
+    errorEl.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Extract Colors';
+  }
+});
+
+// --- bulk import ---
+let lastBulkRows = [];
+
+function renderBulkTable(rows) {
+  const wrap = document.getElementById('bulkTableWrap');
+  if (!rows.length) { wrap.innerHTML = ''; return; }
+
+  const cols = [
+    ['url', 'URL'], ['dimensions', 'Size'],
+    ['primary_frame_hex', 'Frame'], ['temple_hex', 'Temple'],
+    ['accent_hex', 'Accent'], ['tint_hex', 'Tint'],
+    ['lens_detected', 'Lens Found'], ['error', 'Error'],
+  ];
+
+  let html = '<table><thead><tr>' + cols.map(c => `<th>${c[1]}</th>`).join('') + '</tr></thead><tbody>';
+  rows.forEach(r => {
+    html += '<tr>';
+    cols.forEach(([key]) => {
+      if (key.endsWith('_hex')) {
+        const hex = r[key];
+        html += `<td>${hex ? `<span class="hexcell"><span class="hexdot" style="background:${hex}"></span>${hex}</span>` : '—'}</td>`;
+      } else if (key === 'url') {
+        html += `<td style="max-width:220px; overflow:hidden; text-overflow:ellipsis;">${r[key]}</td>`;
+      } else {
+        html += `<td>${r[key] === '' || r[key] === null || r[key] === undefined ? '—' : r[key]}</td>`;
+      }
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+}
+
+document.getElementById('goBulk').addEventListener('click', async () => {
+  const fileInput = document.getElementById('bulkFile');
+  const errorEl = document.getElementById('error');
+  const diagEl = document.getElementById('diag');
+  errorEl.textContent = '';
+  diagEl.textContent = '';
+  if (!fileInput.files.length) { errorEl.textContent = 'Choose a .csv or .txt file of URLs.'; return; }
+
+  const btn = document.getElementById('goBulk');
+  btn.disabled = true;
+  btn.textContent = 'Processing...';
+
+  try {
+    const fd = new FormData();
+    fd.append('urls_file', fileInput.files[0]);
+    const resp = await fetch('/bulk_extract', { method: 'POST', body: fd });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Bulk extraction failed');
+
+    lastBulkRows = data.rows;
+    renderBulkTable(lastBulkRows);
+    document.getElementById('exportBtn').style.display = 'inline-block';
+    diagEl.textContent = `Processed ${data.count} image(s).` + (data.truncated ? ' (file had more than 40 URLs; extra rows were skipped)' : '');
+  } catch (e) {
+    errorEl.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Process All';
+  }
+});
+
+document.getElementById('exportBtn').addEventListener('click', async () => {
+  const resp = await fetch('/export', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ rows: lastBulkRows }),
+  });
+  if (!resp.ok) {
+    const data = await resp.json();
+    document.getElementById('error').textContent = data.error || 'Export failed';
+    return;
+  }
+  const blob = await resp.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'eyeglass_colors_export.csv';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+});
+
+// --- single URL (existing) ---
+document.getElementById('go').addEventListener('click', async () => {
+  const url = document.getElementById('url').value.trim();
+  const errorEl = document.getElementById('error');
+  const resultsEl = document.getElementById('results');
+  const diagEl = document.getElementById('diag');
+  errorEl.textContent = '';
+  resultsEl.innerHTML = '';
+  diagEl.textContent = '';
+  if (!url) { errorEl.textContent = 'Enter an image URL.'; return; }
+
+  const btn = document.getElementById('go');
+  btn.disabled = true;
+  btn.textContent = 'Extracting...';
+
+  try {
+    const resp = await fetch('/extract', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({url})
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Extraction failed');
+
+    data.colors.forEach(c => {
+      const row = document.createElement('div');
+      row.className = 'swatch-row';
+      const sw = document.createElement('div');
+      sw.className = 'swatch';
+      sw.style.background = c.hex || '#f0f0f0';
+      const info = document.createElement('div');
+      let html = `<div class="label">${c.label}</div>`;
+      if (c.hex) {
+        html += `<div class="meta">${c.hex} &middot; ${c.rgb} &middot; ${c.percentage}% of region`;
+        if (c.cluster_tightness !== undefined && c.cluster_tightness !== null) {
+          html += ` &middot; tightness ${c.cluster_tightness}`;
+        }
+        html += `</div>`;
+      } else {
+        html += `<div class="note">${c.note || 'Not detected.'}</div>`;
+      }
+      info.innerHTML = html;
+      row.appendChild(sw);
+      row.appendChild(info);
+      resultsEl.appendChild(row);
+    });
+
+    diagEl.textContent = `Image: ${data.dimensions} · rembg available: ${data.meta.rembg_used} · lens region found: ${data.meta.lens_region_detected}`;
+  } catch (e) {
+    errorEl.textContent = e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Extract Colors';
+  }
+});
+</script>
+</body>
+</html>
