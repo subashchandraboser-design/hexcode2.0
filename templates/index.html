@@ -397,6 +397,45 @@ function renderBulkTable(rows) {
   html += '</tbody></table>';
   wrap.innerHTML = html;
 }
+
+// Export CSV Action
+document.getElementById('exportBtn').addEventListener('click', async () => {
+  const errorEl = document.getElementById('error');
+  errorEl.textContent = '';
+
+  try {
+    const resp = await fetch('/export', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'text/csv'
+      },
+      body: JSON.stringify({ rows: lastBulkRows }),
+    });
+
+    if (!resp.ok) {
+      const data = await resp.json();
+      throw new Error(data.error || 'Export failed');
+    }
+
+    // Convert response stream to blob download
+    const blob = await resp.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.style.display = 'none';
+    a.href = downloadUrl;
+    a.download = 'eyeglass_colors_export.csv';
+    
+    document.body.appendChild(a);
+    a.click();
+    
+    // Revoke URL to prevent memory leaks
+    window.URL.revokeObjectURL(downloadUrl);
+    a.remove();
+  } catch (e) {
+    errorEl.textContent = e.message;
+  }
+});
 </script>
 </body>
 </html>
