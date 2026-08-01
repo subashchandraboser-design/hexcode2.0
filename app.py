@@ -32,6 +32,14 @@ def bounding_box(mask: np.ndarray):
     return top, bottom + 1, left, right + 1
 
 
+# Minimum share of frame pixels a secondary GMM cluster needs, and how far
+# (in RGB distance) it needs to sit from the primary color, before we treat
+# the frame as "multi-color" and report it as a separate row instead of
+# folding it into the single primary color.
+FRAME_MULTI_COLOR_MIN_PCT = 8.0
+FRAME_MULTI_COLOR_MIN_DIST = 30.0
+
+
 def extract_colors_from_image(img: Image.Image):
     """
     Core pipeline. Takes any PIL Image (loaded from a URL, an uploaded
@@ -73,6 +81,15 @@ def extract_colors_from_image(img: Image.Image):
         front_rim_region = obj[non_lens_mask]
         frame_colors = P.extract_dominant_colors_gmm(front_rim_region, max_k=3)
     primary_frame_rgb = frame_colors[0][0] if frame_colors else fg_pixels[0]
+
+    # Any additional frame clusters that are both a meaningful share of the
+    # frame AND visually distinct from the primary color get reported as
+    # their own "Frame Color N" rows, so multi-color frames (e.g. two-tone
+    # or fade frames) show every hex instead of just one.
+    extra_frame_colors = []
+    for rgb, pct, tight in frame_colors[1:]:
+        if pct >= FRAME_MULTI_COLOR_MIN_PCT and np.linalg.norm(rgb - primary_frame_rgb) > FRAME_MULTI_COLOR_MIN_DIST:
+            extra_frame_colors.append((rgb, pct, tight))
 
     # -----------------------------------------------------------
     # Temple / leg color: far left & right, lens pixels excluded
@@ -130,14 +147,26 @@ def extract_colors_from_image(img: Image.Image):
             "percentage": round(float(frame_pct), 1),
             "cluster_tightness": frame_tight,
         },
-        {
-            "label": "Temple Color (Legs)",
-            "hex": P.rgb_to_hex(temple_rgb),
-            "rgb": f"rgb({int(temple_rgb[0])}, {int(temple_rgb[1])}, {int(temple_rgb[2])})",
-            "percentage": round(float(temple_pct), 1),
-            "cluster_tightness": temple_tight,
-        },
     ]
+
+    # Extra frame colors -- multi-color / two-tone frames get one row per
+    # additional detected color, each with its own hex/rgb/percentage.
+    for i, (rgb, pct, tight) in enumerate(extra_frame_colors, start=2):
+        results.append({
+            "label": f"Frame Color {i} (Multi-Color Frame)",
+            "hex": P.rgb_to_hex(rgb),
+            "rgb": f"rgb({int(rgb[0])}, {int(rgb[1])}, {int(rgb[2])})",
+            "percentage": round(float(pct), 1),
+            "cluster_tightness": tight,
+        })
+
+    results.append({
+        "label": "Temple Color (Legs)",
+        "hex": P.rgb_to_hex(temple_rgb),
+        "rgb": f"rgb({int(temple_rgb[0])}, {int(temple_rgb[1])}, {int(temple_rgb[2])})",
+        "percentage": round(float(temple_pct), 1),
+        "cluster_tightness": temple_tight,
+    })
 
     if accent_rgb is not None:
         results.append({
@@ -170,6 +199,7 @@ def extract_colors_from_image(img: Image.Image):
     return results, img.size, {
         "rembg_used": P._REMBG_AVAILABLE,
         "lens_region_detected": lens_detected,
+        "multi_color_frame": bool(extra_frame_colors),
     }
 
 
@@ -183,6 +213,12 @@ def colors_to_row(url: str, colors, dimensions, meta, error: str = None) -> dict
     """
     Flattens one image's result into a single flat dict -- one row,
     hex codes as columns -- for the bulk table / CSV export.
+
+    Multi-color frames can produce more than one "Frame Color N" entry;
+    all of them are joined into the frame_hex / frame_rgb / frame_pct
+    columns as pipe-separated (" | ") lists so nothing is dropped, and
+    the first one is also kept in primary_frame_* for backward
+    compatibility with the single-color columns.
     """
     row = {
         "url": url,
@@ -190,6 +226,9 @@ def colors_to_row(url: str, colors, dimensions, meta, error: str = None) -> dict
         "primary_frame_hex": "",
         "primary_frame_rgb": "",
         "primary_frame_pct": "",
+        "frame_hex": "",
+        "frame_rgb": "",
+        "frame_pct": "",
         "temple_hex": "",
         "temple_rgb": "",
         "temple_pct": "",
@@ -200,25 +239,40 @@ def colors_to_row(url: str, colors, dimensions, meta, error: str = None) -> dict
         "tint_rgb": "",
         "tint_pct": "",
         "lens_detected": meta.get("lens_region_detected") if meta else "",
+        "multi_color_frame": meta.get("multi_color_frame") if meta else "",
         "rembg_used": meta.get("rembg_used") if meta else "",
         "error": error or "",
     }
     if error:
         return row
 
-    label_to_prefix = {
-        "Primary Frame Color": "primary_frame",
-        "Temple Color (Legs)": "temple",
-        "Temple Accent / Pattern Color": "accent",
-        "Tint Color (Lens / Clip-on)": "tint",
-    }
+    frame_hexes, frame_rgbs, frame_pcts = [], [], []
     for c in colors:
-        prefix = label_to_prefix.get(c["label"])
-        if not prefix:
-            continue
-        row[f"{prefix}_hex"] = c.get("hex") or ""
-        row[f"{prefix}_rgb"] = c.get("rgb") or ""
-        row[f"{prefix}_pct"] = c.get("percentage", "")
+        label = c["label"]
+        if label == "Primary Frame Color" or label.startswith("Frame Color "):
+            frame_hexes.append(c.get("hex") or "")
+            frame_rgbs.append(c.get("rgb") or "")
+            frame_pcts.append(str(c.get("percentage", "")))
+            if label == "Primary Frame Color":
+                row["primary_frame_hex"] = c.get("hex") or ""
+                row["primary_frame_rgb"] = c.get("rgb") or ""
+                row["primary_frame_pct"] = c.get("percentage", "")
+        elif label == "Temple Color (Legs)":
+            row["temple_hex"] = c.get("hex") or ""
+            row["temple_rgb"] = c.get("rgb") or ""
+            row["temple_pct"] = c.get("percentage", "")
+        elif label == "Temple Accent / Pattern Color":
+            row["accent_hex"] = c.get("hex") or ""
+            row["accent_rgb"] = c.get("rgb") or ""
+            row["accent_pct"] = c.get("percentage", "")
+        elif label == "Tint Color (Lens / Clip-on)":
+            row["tint_hex"] = c.get("hex") or ""
+            row["tint_rgb"] = c.get("rgb") or ""
+            row["tint_pct"] = c.get("percentage", "")
+
+    row["frame_hex"] = " | ".join(frame_hexes)
+    row["frame_rgb"] = " | ".join(frame_rgbs)
+    row["frame_pct"] = " | ".join(frame_pcts)
     return row
 
 
@@ -244,10 +298,11 @@ def parse_url_list_file(raw_bytes: bytes) -> list:
 CSV_COLUMNS = [
     "url", "dimensions",
     "primary_frame_hex", "primary_frame_rgb", "primary_frame_pct",
+    "frame_hex", "frame_rgb", "frame_pct",
     "temple_hex", "temple_rgb", "temple_pct",
     "accent_hex", "accent_rgb", "accent_pct",
     "tint_hex", "tint_rgb", "tint_pct",
-    "lens_detected", "rembg_used", "error",
+    "lens_detected", "multi_color_frame", "rembg_used", "error",
 ]
 
 
@@ -313,6 +368,9 @@ def bulk_extract():
     image URLs. Each URL becomes one row; hex codes for each part land
     in their own column (see CSV_COLUMNS). One failing URL doesn't stop
     the batch -- its row just carries an 'error' field instead.
+
+    No cap on the number of URLs -- every URL found in the uploaded
+    file is processed and included in the output/export.
     """
     global _LAST_BULK_ROWS
     try:
@@ -325,10 +383,6 @@ def bulk_extract():
         if not urls:
             return jsonify({"error": "No URLs found in that file"}), 400
 
-        MAX_ROWS = 40  # keep a single request from running indefinitely
-        truncated = len(urls) > MAX_ROWS
-        urls = urls[:MAX_ROWS]
-
         rows = []
         for url in urls:
             try:
@@ -338,7 +392,7 @@ def bulk_extract():
                 rows.append(colors_to_row(url, None, None, {}, error=str(e)))
 
         _LAST_BULK_ROWS = rows
-        return jsonify({"success": True, "rows": rows, "truncated": truncated, "count": len(rows)})
+        return jsonify({"success": True, "rows": rows, "count": len(rows)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
