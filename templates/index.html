@@ -1,3 +1,63 @@
+
+Claude finished the response
+
+import numpy as np import requests from PIL import Image from flask import Flask, render_template, request, jsonify import pipeline as P app = Flask(__name__) def fetch_image(url: str) -> Image.Image: headers = { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Ap
+
+pasted
+
+i want some changes need it enagu ipo frame la multi color iruntha antha hex color show akanum and file upload la 40 products mattum tha podu iruka athu limit vendam evlo image url venalum upload and output vara mathiri kudu
+
+
+Ran 4 commands, created a file, read a file
+Ran 4 commands, created a file, read a file
+Rendiyum change pannirukken, enna panniten nu sollaren:
+
+1. Multi-color frame → எல்லா hex-um வரும்
+Frame la primary color mattum illama, weightage (≥8% pixels) irundhu, primary color-oda konjam vithyasama (RGB distance >30) irukura extra colors-um detect pannum. Antha colors "Frame Color 2 (Multi-Color Frame)", "Frame Color 3..." nu separate rows ah result la varum — so two-tone/multi-color frame na eppo venalum ella hex-um kaamikkum. CSV export la frame_hex, frame_rgb, frame_pct nu columns add pannirukken, multiple colors irundha " | " (pipe) symbol vecha join panni oru cell la varum. (primary_frame_hex column pazhaya maadhiriye irukku, backward compatibility ku.)
+
+2. Bulk upload la 40 limit remove pannirukken
+MAX_ROWS = 40 and truncated logic full ah eduthuten. Ippo file la evlo URLs irundhalum, adhu ella URL-um process pannum, output/export la varum. (Note: URLs romba adhigama irundha — like 500+ — processing time perusa aagum, since ovvoru image-um download panni pipeline run aagum. Vேணா, adha handle panna async/background job pathi sollunga, naan add pannitren.)
+
+
+App
+PY 
+
+<!DOCTYPE html> <html lang="en"> <head> <meta charset="UTF-8"> <meta name="viewport" content="width=device-width, initial-scale=1.0"> <title>Exact Eyeglass Color Extractor</title> <style> * { box-sizing: border-box; } body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI"
+
+pasted
+
+any change in html can chnage and give it?
+
+
+Strategized HTML modifications and table column restructuring
+Strategized HTML modifications and table column restructuring
+HTML-um match aaguma nu update pannirukken (இது templates/index.html la போடணும், app.py side la already update pannitten):
+
+1. Multi-color frame swatches
+Single URL / Upload result la, frame multi-color na "Frame Color 2", "Frame Color 3" nu extra swatch cards varum, multi-color nu oru small badge oda label la kaamikkum.
+
+2. 40 limit text remove
+Bulk tab-la "up to 40 per run" nu irundha text-a maathi "every URL in the file will be processed, no limit" nu update pannirukken. Processing time perusa aagalam nu chinna progress message-um add pannirukken ("this can take a while... keep this tab open").
+
+3. Bulk table la Frame column
+Munnaadi primary_frame_hex mattum kaamikichu — ippo frame_hex column use pannuren (app.py la multiple hex " | " join panni tharudhu), so multi-color frame na table cell-lame rendu/moonu hex dots + codes ellam side-by-side varum.
+
+Rendu files-um (app.py, index.html) mela irukku — index.html-a உங்க Flask project-oda templates/ folder-la replace pannunga.
+
+
+Index
+Code · HTML 
+
+Want to be notified when Claude responds?
+
+
+
+
+
+Claude is AI and can make mistakes. Please double-check responses.
+
+
+Index · HTML
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -29,7 +89,7 @@
     margin-bottom: 24px;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
   }
-
+ 
   /* Tabs Styling */
   .tabs { display: flex; gap: 8px; margin-bottom: 16px; border-bottom: 1px solid #232f48; padding-bottom: 12px; }
   .tab-btn {
@@ -47,7 +107,7 @@
   .tab-btn.active { background: #6366f1; color: #ffffff; border-color: #6366f1; }
   .panel { display: none; }
   .panel.active { display: block; }
-
+ 
   /* Input Elements */
   .input-row { display: flex; gap: 12px; }
   input[type=text] {
@@ -71,7 +131,7 @@
     border-radius: 8px;
     color: #8a99ad;
   }
-
+ 
   /* Purple Action Button */
   button.action-btn {
     padding: 12px 22px;
@@ -87,7 +147,7 @@
   }
   button.action-btn:hover { background: #4f46e5; }
   button.action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
+ 
   /* Grid Layout for Preview and Results */
   .results-grid {
     display: grid;
@@ -98,7 +158,7 @@
   @media (max-width: 640px) {
     .results-grid { grid-template-columns: 1fr; }
   }
-
+ 
   /* Left Side: Image Box */
   .image-box {
     background: #172033;
@@ -122,7 +182,7 @@
   }
   .preview-wrapper img { max-width: 100%; height: auto; max-height: 220px; object-fit: contain; }
   .image-dim { margin-top: 12px; font-size: 13px; color: #8a99ad; font-weight: 500; }
-
+ 
   /* Right Side: Color Swatches Stack */
   .swatch-list { display: flex; flex-direction: column; gap: 12px; }
   .swatch-card {
@@ -145,13 +205,26 @@
   .swatch-label { font-size: 12px; color: #8a99ad; font-weight: 500; }
   .swatch-hex { font-size: 18px; font-weight: 700; color: #ffffff; letter-spacing: 0.5px; }
   .swatch-pct { font-size: 12px; color: #64748b; }
-
+  .multi-badge {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 1px 7px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    color: #172033;
+    background: #38bdf8;
+    border-radius: 999px;
+    vertical-align: middle;
+  }
+ 
   /* Bulk Table Styling */
   table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 13px; }
   th, td { border: 1px solid #232f48; padding: 10px; text-align: left; }
   th { background: #101726; color: #8a99ad; }
-  .hexcell { display: inline-flex; align-items: center; gap: 8px; }
-  .hexdot { width: 14px; height: 14px; border-radius: 3px; border: 1px solid #fff; display: inline-block; }
+  .hexcell { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .hexdot { width: 14px; height: 14px; border-radius: 3px; border: 1px solid #fff; display: inline-block; flex-shrink: 0; }
+  .hexchip { display: inline-flex; align-items: center; gap: 4px; margin-right: 6px; }
   
   #exportBtn { background: #10b981; margin-top: 12px; }
   #exportBtn:hover { background: #059669; }
@@ -160,19 +233,19 @@
 </style>
 </head>
 <body>
-
+ 
   <div class="header">
     <h1>Exact Eyeglass Color Extractor</h1>
     <p class="subtitle">Accurate Frame, Tint, and Temple Leg Color Extractor</p>
   </div>
-
+ 
   <div class="card">
     <div class="tabs">
       <button class="tab-btn active" data-tab="single-url">Single URL</button>
       <button class="tab-btn" data-tab="single-file">Upload Image</button>
       <button class="tab-btn" data-tab="bulk">Bulk Import</button>
     </div>
-
+ 
     <!-- Single URL Panel -->
     <div class="panel active" id="single-url">
       <div class="input-row">
@@ -180,7 +253,7 @@
         <button class="action-btn" id="go">Extract Colors</button>
       </div>
     </div>
-
+ 
     <!-- Upload Image Panel -->
     <div class="panel" id="single-file">
       <div class="input-row">
@@ -188,23 +261,24 @@
         <button class="action-btn" id="goFile">Extract Colors</button>
       </div>
     </div>
-
+ 
     <!-- Bulk Import Panel -->
     <div class="panel" id="bulk">
       <p style="font-size:13px; color:#8a99ad; margin-top:0;">
-        Upload a .csv or .txt file containing CDN image URLs (up to 40 per run).
+        Upload a .csv or .txt file containing CDN image URLs — every URL in the file will be processed, no limit.
       </p>
       <div class="input-row">
         <input type="file" id="bulkFile" accept=".csv,.txt">
         <button class="action-btn" id="goBulk">Process All</button>
       </div>
+      <div id="bulkProgress" style="font-size:12px; color:#8a99ad; margin-top:10px;"></div>
       <button class="action-btn" id="exportBtn" style="display:none;">Export to CSV</button>
       <div id="bulkTableWrap"></div>
     </div>
   </div>
-
+ 
   <div id="error"></div>
-
+ 
   <!-- Output Layout: Image Display on Left, Swatches on Right -->
   <div class="results-grid" id="resultsContainer" style="display:none;">
     <div class="image-box">
@@ -213,12 +287,12 @@
       </div>
       <div class="image-dim" id="imgDimensions">Dimensions: -</div>
     </div>
-
+ 
     <div class="swatch-list" id="swatchList"></div>
   </div>
-
+ 
   <div id="diag"></div>
-
+ 
 <script>
 // Tab Switching
 document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -231,49 +305,56 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     document.getElementById('diag').textContent = '';
   });
 });
-
+ 
 // Render Swatch Cards in Dark Theme Style
 function renderColorRows(colors, imgUrl, dimensions) {
   const container = document.getElementById('resultsContainer');
   const swatchList = document.getElementById('swatchList');
   const previewImg = document.getElementById('previewImg');
   const dimensionsEl = document.getElementById('imgDimensions');
-
+ 
   swatchList.innerHTML = '';
   
   if (imgUrl) {
     previewImg.src = imgUrl;
   }
   dimensionsEl.textContent = `Dimensions: ${dimensions || 'N/A'}`;
-
+ 
   colors.forEach(c => {
     const card = document.createElement('div');
     card.className = 'swatch-card';
-
+ 
     const swatch = document.createElement('div');
     swatch.className = 'swatch-box';
     swatch.style.backgroundColor = c.hex || '#1f2937';
-
+ 
     const info = document.createElement('div');
     info.className = 'swatch-info';
-
-    let html = `<div class="swatch-label">${c.label}</div>`;
+ 
+    // Extra frame colors from a multi-color / two-tone frame get a small
+    // badge next to the label so they're easy to spot in the swatch list.
+    const isExtraFrameColor = c.label.startsWith('Frame Color ');
+    const labelHtml = isExtraFrameColor
+      ? `${c.label.replace(' (Multi-Color Frame)', '')}<span class="multi-badge">multi-color</span>`
+      : c.label;
+ 
+    let html = `<div class="swatch-label">${labelHtml}</div>`;
     if (c.hex) {
       html += `<div class="swatch-hex">${c.hex}</div>`;
       html += `<div class="swatch-pct">${c.percentage}% of pixels</div>`;
     } else {
       html += `<div class="swatch-pct" style="color:#f59e0b;">${c.note || 'Not detected'}</div>`;
     }
-
+ 
     info.innerHTML = html;
     card.appendChild(swatch);
     card.appendChild(info);
     swatchList.appendChild(card);
   });
-
+ 
   container.style.display = 'grid';
 }
-
+ 
 // Single File Upload
 document.getElementById('goFile').addEventListener('click', async () => {
   const fileInput = document.getElementById('imgFile');
@@ -281,13 +362,13 @@ document.getElementById('goFile').addEventListener('click', async () => {
   const diagEl = document.getElementById('diag');
   errorEl.textContent = '';
   diagEl.textContent = '';
-
+ 
   if (!fileInput.files.length) { errorEl.textContent = 'Choose an image file.'; return; }
-
+ 
   const btn = document.getElementById('goFile');
   btn.disabled = true;
   btn.textContent = 'Extracting...';
-
+ 
   try {
     const fd = new FormData();
     const file = fileInput.files[0];
@@ -296,10 +377,10 @@ document.getElementById('goFile').addEventListener('click', async () => {
     const resp = await fetch('/extract_file', { method: 'POST', body: fd });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || 'Extraction failed');
-
+ 
     const tempUrl = URL.createObjectURL(file);
     renderColorRows(data.colors, tempUrl, data.dimensions);
-    diagEl.textContent = `rembg available: ${data.meta.rembg_used} · lens region found: ${data.meta.lens_region_detected}`;
+    diagEl.textContent = `rembg available: ${data.meta.rembg_used} · lens region found: ${data.meta.lens_region_detected} · multi-color frame: ${data.meta.multi_color_frame}`;
   } catch (e) {
     errorEl.textContent = e.message;
   } finally {
@@ -307,7 +388,7 @@ document.getElementById('goFile').addEventListener('click', async () => {
     btn.textContent = 'Extract Colors';
   }
 });
-
+ 
 // Single URL Processing
 document.getElementById('go').addEventListener('click', async () => {
   const url = document.getElementById('url').value.trim();
@@ -315,13 +396,13 @@ document.getElementById('go').addEventListener('click', async () => {
   const diagEl = document.getElementById('diag');
   errorEl.textContent = '';
   diagEl.textContent = '';
-
+ 
   if (!url) { errorEl.textContent = 'Enter an image URL.'; return; }
-
+ 
   const btn = document.getElementById('go');
   btn.disabled = true;
   btn.textContent = 'Extracting...';
-
+ 
   try {
     const resp = await fetch('/extract', {
       method: 'POST',
@@ -330,9 +411,9 @@ document.getElementById('go').addEventListener('click', async () => {
     });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || 'Extraction failed');
-
+ 
     renderColorRows(data.colors, url, data.dimensions);
-    diagEl.textContent = `rembg available: ${data.meta ? data.meta.rembg_used : 'N/A'}`;
+    diagEl.textContent = `rembg available: ${data.meta ? data.meta.rembg_used : 'N/A'} · multi-color frame: ${data.meta ? data.meta.multi_color_frame : 'N/A'}`;
   } catch (e) {
     errorEl.textContent = e.message;
   } finally {
@@ -340,54 +421,70 @@ document.getElementById('go').addEventListener('click', async () => {
     btn.textContent = 'Extract Colors';
   }
 });
-
+ 
 // Bulk Import
 let lastBulkRows = [];
 document.getElementById('goBulk').addEventListener('click', async () => {
   const fileInput = document.getElementById('bulkFile');
   const errorEl = document.getElementById('error');
+  const progressEl = document.getElementById('bulkProgress');
   errorEl.textContent = '';
+  progressEl.textContent = '';
   if (!fileInput.files.length) { errorEl.textContent = 'Choose a .csv or .txt file.'; return; }
-
+ 
   const btn = document.getElementById('goBulk');
   btn.disabled = true;
   btn.textContent = 'Processing...';
-
+  progressEl.textContent = 'Processing every URL in the file — this can take a while for large lists, please keep this tab open.';
+ 
   try {
     const fd = new FormData();
     fd.append('urls_file', fileInput.files[0]);
     const resp = await fetch('/bulk_extract', { method: 'POST', body: fd });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || 'Bulk extraction failed');
-
+ 
     lastBulkRows = data.rows;
     renderBulkTable(lastBulkRows);
+    progressEl.textContent = `Done — processed ${data.count} URL${data.count === 1 ? '' : 's'}.`;
     document.getElementById('exportBtn').style.display = 'inline-block';
   } catch (e) {
     errorEl.textContent = e.message;
+    progressEl.textContent = '';
   } finally {
     btn.disabled = false;
     btn.textContent = 'Process All';
   }
 });
-
+ 
+// Renders one or more " | "-separated hex codes in a single table cell,
+// each with its own color dot -- used for the Frame column so multi-color
+// / two-tone frames show every detected hex, not just the first one.
+function renderHexCell(hexStr) {
+  if (!hexStr) return '—';
+  const hexes = hexStr.split('|').map(h => h.trim()).filter(Boolean);
+  if (!hexes.length) return '—';
+  return `<span class="hexcell">${hexes.map(h =>
+    `<span class="hexchip"><span class="hexdot" style="background:${h}"></span>${h}</span>`
+  ).join('')}</span>`;
+}
+ 
 function renderBulkTable(rows) {
   const wrap = document.getElementById('bulkTableWrap');
   if (!rows.length) { wrap.innerHTML = ''; return; }
-
+ 
   const cols = [
     ['url', 'URL'], ['dimensions', 'Size'],
-    ['primary_frame_hex', 'Frame'], ['temple_hex', 'Temple'],
+    ['frame_hex', 'Frame'], ['temple_hex', 'Temple'],
     ['accent_hex', 'Accent'], ['tint_hex', 'Tint']
   ];
-
+ 
   let html = '<table><thead><tr>' + cols.map(c => `<th>${c[1]}</th>`).join('') + '</tr></thead><tbody>';
   rows.forEach(r => {
     html += '<tr>';
     cols.forEach(([key]) => {
       if (key.endsWith('_hex')) {
-        const hex = r[key];
-        html += `<td>${hex ? `<span class="hexcell"><span class="hexdot" style="background:${hex}"></span>${hex}</span>` : '—'}</td>`;
+        html += `<td>${renderHexCell(r[key])}</td>`;
       } else {
         html += `<td>${r[key] || '—'}</td>`;
       }
@@ -397,12 +494,12 @@ function renderBulkTable(rows) {
   html += '</tbody></table>';
   wrap.innerHTML = html;
 }
-
+ 
 // Export CSV Action
 document.getElementById('exportBtn').addEventListener('click', async () => {
   const errorEl = document.getElementById('error');
   errorEl.textContent = '';
-
+ 
   try {
     const resp = await fetch('/export', {
       method: 'POST',
@@ -412,12 +509,12 @@ document.getElementById('exportBtn').addEventListener('click', async () => {
       },
       body: JSON.stringify({ rows: lastBulkRows }),
     });
-
+ 
     if (!resp.ok) {
       const data = await resp.json();
       throw new Error(data.error || 'Export failed');
     }
-
+ 
     // Convert response stream to blob download
     const blob = await resp.blob();
     const downloadUrl = window.URL.createObjectURL(blob);
@@ -439,3 +536,4 @@ document.getElementById('exportBtn').addEventListener('click', async () => {
 </script>
 </body>
 </html>
+ 
