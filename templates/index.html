@@ -1,28 +1,5 @@
-
-Claude finished the response
-
-import numpy as np import requests from PIL import Image from flask import Flask, render_template, request, jsonify import pipeline as P app = Flask(__name__) def fetch_image(url: str) -> Image.Image: headers = { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Ap
-
-pasted
-
-i want some changes need it enagu ipo frame la multi color iruntha antha hex color show akanum and file upload la 40 products mattum tha podu iruka athu limit vendam evlo image url venalum upload and output vara mathiri kudu
-
-
-Ran 4 commands, created a file, read a file
-Ran 4 commands, created a file, read a file
-Rendiyum change pannirukken, enna panniten nu sollaren:
-
-1. Multi-color frame → எல்லா hex-um வரும்
-Frame la primary color mattum illama, weightage (≥8% pixels) irundhu, primary color-oda konjam vithyasama (RGB distance >30) irukura extra colors-um detect pannum. Antha colors "Frame Color 2 (Multi-Color Frame)", "Frame Color 3..." nu separate rows ah result la varum — so two-tone/multi-color frame na eppo venalum ella hex-um kaamikkum. CSV export la frame_hex, frame_rgb, frame_pct nu columns add pannirukken, multiple colors irundha " | " (pipe) symbol vecha join panni oru cell la varum. (primary_frame_hex column pazhaya maadhiriye irukku, backward compatibility ku.)
-
-2. Bulk upload la 40 limit remove pannirukken
-MAX_ROWS = 40 and truncated logic full ah eduthuten. Ippo file la evlo URLs irundhalum, adhu ella URL-um process pannum, output/export la varum. (Note: URLs romba adhigama irundha — like 500+ — processing time perusa aagum, since ovvoru image-um download panni pipeline run aagum. Vேணா, adha handle panna async/background job pathi sollunga, naan add pannitren.)
-
-
-App
-PY 
-
-<!DOCTYPE html> <html lang="en"> <head> <meta charset="UTF-8"> <meta name="viewport" content="width=device-width, initial-scale=1.0"> <title>Exact Eyeglass Color Extractor</title> <style> * { box-sizing: border-box; } body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI"
+<!DOCTYPE html> 
+<html lang="en"> <head> <meta charset="UTF-8"> <meta name="viewport" content="width=device-width, initial-scale=1.0"> <title>Exact Eyeglass Color Extractor</title> <style> * { box-sizing: border-box; } body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI"
 
 pasted
 
