@@ -1,6 +1,11 @@
 import csv
 import io
-import numpy as np
+import os
+import threading
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import requests
 from PIL import Image
 from flask import Flask, render_template, request, jsonify, Response
@@ -9,12 +14,48 @@ import pipeline as P
 
 app = Flask(__name__)
 
+# ------------------------------------------------------------------
+# In-memory job store for bulk processing.
+#
+# WHY THIS CHANGED:
+# The old /bulk_extract endpoint processed every URL one-by-one
+# INSIDE a single HTTP request/response cycle. For large lists
+# (hundreds of URLs), each needing a network fetch + rembg
+# inference + GMM clustering, that easily takes many minutes.
+# gunicorn's --timeout kills the worker long before that finishes,
+# so the request dies and the browser gets a truncated/failed
+# response -- which is why you were only ever seeing ~50 rows.
+#
+# Now /bulk_extract/start kicks off a background job and returns
+# immediately. The frontend polls /bulk_extract/status/<job_id>
+# for progress, and /export/<job_id> streams the CSV once done
+# (or even partially done). No single HTTP request stays open
+# longer than a second, so gunicorn's timeout is irrelevant to it.
+#
+# CAVEAT: this dict lives in one process's memory. It works with
+# multiple THREADS in one worker, but NOT with multiple gunicorn
+# WORKER PROCESSES (each has separate memory, so a poll could hit
+# a worker that never started the job). Run with a single worker
+# and multiple threads, e.g.:
+#
+#   gunicorn --workers 1 --threads 8 --timeout 120 app:app
+#
+# If you need multiple worker processes for other traffic, swap
+# this dict for Redis (or a small SQLite table) as the job store.
+# ------------------------------------------------------------------
+JOBS = {}
+JOBS_LOCK = threading.Lock()
+JOB_TTL_SECONDS = 60 * 60  # drop finished jobs after 1 hour
+
+MAX_WORKERS = int(os.environ.get("BULK_MAX_WORKERS", "6"))
+REQUEST_TIMEOUT = 15
+
 
 def fetch_image(url: str) -> Image.Image:
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
-    resp = requests.get(url, headers=headers, timeout=15)
+    resp = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
     return P.fetch_image_bytes_to_pil(resp.content)
 
@@ -26,7 +67,8 @@ def zone(obj, obj_mask, y0, y1, x0, x1):
     return crop[crop_mask]
 
 
-def bounding_box(mask: np.ndarray):
+def bounding_box(mask):
+    import numpy as np
     rows = np.any(mask, axis=1)
     cols = np.any(mask, axis=0)
     top, bottom = np.where(rows)[0][[0, -1]]
@@ -39,6 +81,8 @@ FRAME_MULTI_COLOR_MIN_DIST = 30.0
 
 
 def extract_colors_from_image(img: Image.Image):
+    import numpy as np
+
     img_resized = img.resize((500, 250), Image.Resampling.LANCZOS)
     img_np = np.array(img_resized, dtype=np.float64)
 
@@ -227,12 +271,8 @@ def colors_to_row(url: str, colors, dimensions, meta, error: str = None) -> dict
     return row
 
 
-# --- MEMORY-OPTIMIZED STREAM PARSER ---
 def parse_url_list_file(file_storage) -> list:
-    """
-    Reads the file line-by-line as a stream.
-    Does NOT load the whole 75MB file into RAM at once.
-    """
+    """Reads the URL list file as a stream (doesn't load huge files fully into RAM)."""
     seen = set()
     urls = []
 
@@ -244,7 +284,6 @@ def parse_url_list_file(file_storage) -> list:
 
     text_stream.seek(0)
 
-    # Check if Shopify header exists
     if "Image Src" in first_line or "Variant Image" in first_line:
         reader = csv.DictReader(text_stream)
         for row in reader:
@@ -254,7 +293,6 @@ def parse_url_list_file(file_storage) -> list:
                     seen.add(u)
                     urls.append(u)
     else:
-        # Fallback for simple txt/csv files
         reader = csv.reader(text_stream)
         for row in reader:
             found = next((f.strip().strip('"') for f in row if f.strip().lower().startswith("http")), None)
@@ -275,8 +313,53 @@ CSV_COLUMNS = [
     "lens_detected", "multi_color_frame", "rembg_used", "error",
 ]
 
-_LAST_BULK_ROWS = []
 
+# ------------------------------------------------------------------
+# Background job runner
+# ------------------------------------------------------------------
+
+def _process_one(url):
+    try:
+        colors, dimensions, meta = extract_eyeglass_colors(url)
+        return colors_to_row(url, colors, dimensions, meta)
+    except Exception as e:
+        return colors_to_row(url, None, None, {}, error=str(e))
+
+
+def _run_bulk_job(job_id, urls):
+    job = JOBS[job_id]
+    n = len(urls)
+    job["rows"] = [None] * n
+
+    try:
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            future_to_idx = {executor.submit(_process_one, u): i for i, u in enumerate(urls)}
+            for future in as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                row = future.result()
+                with JOBS_LOCK:
+                    job["rows"][idx] = row
+                    job["done"] += 1
+    finally:
+        with JOBS_LOCK:
+            job["status"] = "finished"
+            job["finished_at"] = time.time()
+
+
+def _cleanup_old_jobs():
+    now = time.time()
+    with JOBS_LOCK:
+        stale = [
+            jid for jid, j in JOBS.items()
+            if j.get("status") == "finished" and now - j.get("finished_at", now) > JOB_TTL_SECONDS
+        ]
+        for jid in stale:
+            del JOBS[jid]
+
+
+# ------------------------------------------------------------------
+# Routes
+# ------------------------------------------------------------------
 
 @app.route("/", methods=["GET"])
 def home():
@@ -326,39 +409,63 @@ def extract_file():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/bulk_extract", methods=["POST"])
-def bulk_extract():
-    global _LAST_BULK_ROWS
-    try:
-        if "urls_file" not in request.files or request.files["urls_file"].filename == "":
-            return jsonify({"error": "Please choose a .csv or .txt file listing image URLs"}), 400
+@app.route("/bulk_extract/start", methods=["POST"])
+def bulk_extract_start():
+    """Kicks off background processing and returns immediately with a job_id.
+    No 500-image request ever sits open long enough to hit a server timeout."""
+    _cleanup_old_jobs()
 
-        file = request.files["urls_file"]
-        
-        # Passes stream directly (Memory Optimization)
-        urls = parse_url_list_file(file)
+    if "urls_file" not in request.files or request.files["urls_file"].filename == "":
+        return jsonify({"error": "Please choose a .csv or .txt file listing image URLs"}), 400
 
-        if not urls:
-            return jsonify({"error": "No URLs found in that file"}), 400
+    file = request.files["urls_file"]
+    urls = parse_url_list_file(file)
 
-        rows = []
-        for url in urls:
-            try:
-                colors, dimensions, meta = extract_eyeglass_colors(url)
-                rows.append(colors_to_row(url, colors, dimensions, meta))
-            except Exception as e:
-                rows.append(colors_to_row(url, None, None, {}, error=str(e)))
+    if not urls:
+        return jsonify({"error": "No URLs found in that file"}), 400
 
-        _LAST_BULK_ROWS = rows
-        return jsonify({"success": True, "rows": rows, "count": len(rows)})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    job_id = uuid.uuid4().hex
+    with JOBS_LOCK:
+        JOBS[job_id] = {
+            "status": "running",
+            "total": len(urls),
+            "done": 0,
+            "rows": [],
+            "created_at": time.time(),
+            "finished_at": None,
+        }
+
+    thread = threading.Thread(target=_run_bulk_job, args=(job_id, urls), daemon=True)
+    thread.start()
+
+    return jsonify({"job_id": job_id, "total": len(urls)})
 
 
-@app.route("/export", methods=["POST"])
-def export():
-    data = request.get_json(silent=True) or {}
-    rows = data.get("rows") or _LAST_BULK_ROWS
+@app.route("/bulk_extract/status/<job_id>", methods=["GET"])
+def bulk_extract_status(job_id):
+    """Frontend polls this every couple seconds for live progress + rows so far."""
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            return jsonify({"error": "Unknown or expired job id"}), 404
+        rows_so_far = [r for r in job["rows"] if r is not None]
+        return jsonify({
+            "status": job["status"],
+            "total": job["total"],
+            "done": job["done"],
+            "rows": rows_so_far,
+        })
+
+
+@app.route("/export/<job_id>", methods=["GET"])
+def export_job(job_id):
+    """Streams the CSV straight from the job store -- works even while a
+    job is still partially running, so you never lose completed rows."""
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            return jsonify({"error": "Unknown or expired job id"}), 404
+        rows = [r for r in job["rows"] if r is not None]
 
     if not rows:
         return jsonify({"error": "No results to export yet"}), 400
