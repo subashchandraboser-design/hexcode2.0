@@ -246,6 +246,20 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   });
 });
 
+// Helper: Safely parses JSON responses and intercepts HTML server errors
+async function handleJsonResponse(response) {
+  const contentType = response.headers.get("content-type");
+  if (!contentType || !contentType.includes("application/json")) {
+    const errorHtml = await response.text();
+    throw new Error(`Server returned a non-JSON error (${response.status}). Check server logs.`);
+  }
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || `Request failed with status ${response.status}`);
+  }
+  return data;
+}
+
 // Render Swatch Cards in Dark Theme Style
 function renderColorRows(colors, imgUrl, dimensions) {
   const container = document.getElementById('resultsContainer');
@@ -271,8 +285,6 @@ function renderColorRows(colors, imgUrl, dimensions) {
     const info = document.createElement('div');
     info.className = 'swatch-info';
 
-    // Extra frame colors from a multi-color / two-tone frame get a small
-    // badge next to the label so they're easy to spot in the swatch list.
     const isExtraFrameColor = c.label.startsWith('Frame Color ');
     const labelHtml = isExtraFrameColor
       ? `${c.label.replace(' (Multi-Color Frame)', '')}<span class="multi-badge">multi-color</span>`
@@ -315,8 +327,7 @@ document.getElementById('goFile').addEventListener('click', async () => {
     fd.append('image', file);
     
     const resp = await fetch('/extract_file', { method: 'POST', body: fd });
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Extraction failed');
+    const data = await handleJsonResponse(resp);
 
     const tempUrl = URL.createObjectURL(file);
     renderColorRows(data.colors, tempUrl, data.dimensions);
@@ -349,8 +360,7 @@ document.getElementById('go').addEventListener('click', async () => {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({url})
     });
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Extraction failed');
+    const data = await handleJsonResponse(resp);
 
     renderColorRows(data.colors, url, data.dimensions);
     diagEl.textContent = `rembg available: ${data.meta ? data.meta.rembg_used : 'N/A'} · multi-color frame: ${data.meta ? data.meta.multi_color_frame : 'N/A'}`;
@@ -375,18 +385,19 @@ document.getElementById('goBulk').addEventListener('click', async () => {
   const btn = document.getElementById('goBulk');
   btn.disabled = true;
   btn.textContent = 'Processing...';
-  progressEl.textContent = 'Processing every URL in the file — this can take a while for large lists, please keep this tab open.';
+  progressEl.textContent = 'Processing URLs — this can take a while for large lists, please keep this tab open.';
 
   try {
     const fd = new FormData();
     fd.append('urls_file', fileInput.files[0]);
     const resp = await fetch('/bulk_extract', { method: 'POST', body: fd });
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Bulk extraction failed');
+    const data = await handleJsonResponse(resp);
 
     lastBulkRows = data.rows;
     renderBulkTable(lastBulkRows);
-    progressEl.textContent = `Done — processed ${data.count} URL${data.count === 1 ? '' : 's'}.`;
+    
+    let noteMsg = data.note ? ` (${data.note})` : '';
+    progressEl.textContent = `Done — processed ${data.count} URL${data.count === 1 ? '' : 's'}${noteMsg}.`;
     document.getElementById('exportBtn').style.display = 'inline-block';
   } catch (e) {
     errorEl.textContent = e.message;
@@ -397,9 +408,6 @@ document.getElementById('goBulk').addEventListener('click', async () => {
   }
 });
 
-// Renders one or more " | "-separated hex codes in a single table cell,
-// each with its own color dot -- used for the Frame column so multi-color
-// / two-tone frames show every detected hex, not just the first one.
 function renderHexCell(hexStr) {
   if (!hexStr) return '—';
   const hexes = hexStr.split('|').map(h => h.trim()).filter(Boolean);
@@ -450,12 +458,16 @@ document.getElementById('exportBtn').addEventListener('click', async () => {
       body: JSON.stringify({ rows: lastBulkRows }),
     });
 
-    if (!resp.ok) {
+    const contentType = resp.headers.get("content-type");
+    if (contentType && contentType.includes("application/json")) {
       const data = await resp.json();
       throw new Error(data.error || 'Export failed');
     }
 
-    // Convert response stream to blob download
+    if (!resp.ok) {
+      throw new Error(`Export failed with status ${resp.status}`);
+    }
+
     const blob = await resp.blob();
     const downloadUrl = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -466,7 +478,6 @@ document.getElementById('exportBtn').addEventListener('click', async () => {
     document.body.appendChild(a);
     a.click();
     
-    // Revoke URL to prevent memory leaks
     window.URL.revokeObjectURL(downloadUrl);
     a.remove();
   } catch (e) {
