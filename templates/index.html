@@ -14,13 +14,11 @@
     margin: 0 auto;
     padding: 40px 20px;
   }
-  
-  /* Header Section */
+
   .header { text-align: center; margin-bottom: 28px; }
   h1 { font-size: 28px; font-weight: 700; margin: 0 0 8px 0; color: #ffffff; }
   .subtitle { color: #8a99ad; font-size: 15px; margin: 0; }
-  
-  /* Input Card / Container */
+
   .card {
     background: #172033;
     border: 1px solid #232f48;
@@ -30,7 +28,6 @@
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
   }
 
-  /* Tabs Styling */
   .tabs { display: flex; gap: 8px; margin-bottom: 16px; border-bottom: 1px solid #232f48; padding-bottom: 12px; }
   .tab-btn {
     padding: 8px 16px;
@@ -48,7 +45,6 @@
   .panel { display: none; }
   .panel.active { display: block; }
 
-  /* Input Elements */
   .input-row { display: flex; gap: 12px; }
   input[type=text] {
     flex: 1;
@@ -61,7 +57,7 @@
     outline: none;
   }
   input[type=text]:focus { border-color: #6366f1; }
-  
+
   input[type=file] {
     flex: 1;
     padding: 10px;
@@ -72,7 +68,6 @@
     color: #8a99ad;
   }
 
-  /* Purple Action Button */
   button.action-btn {
     padding: 12px 22px;
     background: #6366f1;
@@ -88,7 +83,6 @@
   button.action-btn:hover { background: #4f46e5; }
   button.action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-  /* Grid Layout for Preview and Results */
   .results-grid {
     display: grid;
     grid-template-columns: 1fr 1.2fr;
@@ -99,7 +93,6 @@
     .results-grid { grid-template-columns: 1fr; }
   }
 
-  /* Left Side: Image Box */
   .image-box {
     background: #172033;
     border: 1px solid #232f48;
@@ -123,7 +116,6 @@
   .preview-wrapper img { max-width: 100%; height: auto; max-height: 220px; object-fit: contain; }
   .image-dim { margin-top: 12px; font-size: 13px; color: #8a99ad; font-weight: 500; }
 
-  /* Right Side: Color Swatches Stack */
   .swatch-list { display: flex; flex-direction: column; gap: 12px; }
   .swatch-card {
     background: #172033;
@@ -158,14 +150,30 @@
     vertical-align: middle;
   }
 
-  /* Bulk Table Styling */
   table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 13px; }
   th, td { border: 1px solid #232f48; padding: 10px; text-align: left; }
   th { background: #101726; color: #8a99ad; }
   .hexcell { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .hexdot { width: 14px; height: 14px; border-radius: 3px; border: 1px solid #fff; display: inline-block; flex-shrink: 0; }
   .hexchip { display: inline-flex; align-items: center; gap: 4px; margin-right: 6px; }
-  
+
+  /* Progress bar for bulk jobs */
+  .progress-wrap {
+    margin-top: 14px;
+    background: #0d1322;
+    border: 1px solid #283754;
+    border-radius: 8px;
+    height: 10px;
+    overflow: hidden;
+    display: none;
+  }
+  .progress-bar {
+    height: 100%;
+    width: 0%;
+    background: #6366f1;
+    transition: width 0.3s ease;
+  }
+
   #exportBtn { background: #10b981; margin-top: 12px; }
   #exportBtn:hover { background: #059669; }
   #error { color: #ef4444; margin-top: 12px; font-size: 14px; text-align: center; }
@@ -205,12 +213,15 @@
     <!-- Bulk Import Panel -->
     <div class="panel" id="bulk">
       <p style="font-size:13px; color:#8a99ad; margin-top:0;">
-        Upload a .csv or .txt file containing CDN image URLs — every URL in the file will be processed, no limit.
+        Upload a .csv or .txt file containing CDN image URLs. Processing runs in the
+        background in parallel, so this works for large lists (500+) without timing out —
+        you can watch progress below and export as soon as (or while) it finishes.
       </p>
       <div class="input-row">
         <input type="file" id="bulkFile" accept=".csv,.txt">
         <button class="action-btn" id="goBulk">Process All</button>
       </div>
+      <div class="progress-wrap" id="progressWrap"><div class="progress-bar" id="progressBar"></div></div>
       <div id="bulkProgress" style="font-size:12px; color:#8a99ad; margin-top:10px;"></div>
       <button class="action-btn" id="exportBtn" style="display:none;">Export to CSV</button>
       <div id="bulkTableWrap"></div>
@@ -246,11 +257,10 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   });
 });
 
-// Helper: Safely parses JSON responses and intercepts HTML server errors
 async function handleJsonResponse(response) {
   const contentType = response.headers.get("content-type");
   if (!contentType || !contentType.includes("application/json")) {
-    const errorHtml = await response.text();
+    await response.text();
     throw new Error(`Server returned a non-JSON error (${response.status}). Check server logs.`);
   }
   const data = await response.json();
@@ -260,7 +270,6 @@ async function handleJsonResponse(response) {
   return data;
 }
 
-// Render Swatch Cards in Dark Theme Style
 function renderColorRows(colors, imgUrl, dimensions) {
   const container = document.getElementById('resultsContainer');
   const swatchList = document.getElementById('swatchList');
@@ -268,7 +277,7 @@ function renderColorRows(colors, imgUrl, dimensions) {
   const dimensionsEl = document.getElementById('imgDimensions');
 
   swatchList.innerHTML = '';
-  
+
   if (imgUrl) {
     previewImg.src = imgUrl;
   }
@@ -325,7 +334,7 @@ document.getElementById('goFile').addEventListener('click', async () => {
     const fd = new FormData();
     const file = fileInput.files[0];
     fd.append('image', file);
-    
+
     const resp = await fetch('/extract_file', { method: 'POST', body: fd });
     const data = await handleJsonResponse(resp);
 
@@ -372,41 +381,13 @@ document.getElementById('go').addEventListener('click', async () => {
   }
 });
 
-// Bulk Import
-let lastBulkRows = [];
-document.getElementById('goBulk').addEventListener('click', async () => {
-  const fileInput = document.getElementById('bulkFile');
-  const errorEl = document.getElementById('error');
-  const progressEl = document.getElementById('bulkProgress');
-  errorEl.textContent = '';
-  progressEl.textContent = '';
-  if (!fileInput.files.length) { errorEl.textContent = 'Choose a .csv or .txt file.'; return; }
-
-  const btn = document.getElementById('goBulk');
-  btn.disabled = true;
-  btn.textContent = 'Processing...';
-  progressEl.textContent = 'Processing URLs — this can take a while for large lists, please keep this tab open.';
-
-  try {
-    const fd = new FormData();
-    fd.append('urls_file', fileInput.files[0]);
-    const resp = await fetch('/bulk_extract', { method: 'POST', body: fd });
-    const data = await handleJsonResponse(resp);
-
-    lastBulkRows = data.rows;
-    renderBulkTable(lastBulkRows);
-    
-    let noteMsg = data.note ? ` (${data.note})` : '';
-    progressEl.textContent = `Done — processed ${data.count} URL${data.count === 1 ? '' : 's'}${noteMsg}.`;
-    document.getElementById('exportBtn').style.display = 'inline-block';
-  } catch (e) {
-    errorEl.textContent = e.message;
-    progressEl.textContent = '';
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Process All';
-  }
-});
+// ------------------------------------------------------------
+// Bulk Import: start a background job, then poll for progress.
+// No single request stays open long enough to hit a server
+// timeout, so this works the same for 20 URLs or 2000.
+// ------------------------------------------------------------
+let currentJobId = null;
+let pollTimer = null;
 
 function renderHexCell(hexStr) {
   if (!hexStr) return '—';
@@ -434,7 +415,7 @@ function renderBulkTable(rows) {
       if (key.endsWith('_hex')) {
         html += `<td>${renderHexCell(r[key])}</td>`;
       } else {
-        html += `<td>${r[key] || '—'}</td>`;
+        html += `<td>${(r[key] ?? '') || '—'}</td>`;
       }
     });
     html += '</tr>';
@@ -443,46 +424,104 @@ function renderBulkTable(rows) {
   wrap.innerHTML = html;
 }
 
-// Export CSV Action
-document.getElementById('exportBtn').addEventListener('click', async () => {
+function stopPolling() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+
+async function pollJob(jobId) {
+  const errorEl = document.getElementById('error');
+  const progressEl = document.getElementById('bulkProgress');
+  const progressBar = document.getElementById('progressBar');
+  const goBulkBtn = document.getElementById('goBulk');
+  const exportBtn = document.getElementById('exportBtn');
+
+  try {
+    const resp = await fetch(`/bulk_extract/status/${jobId}`);
+    const data = await handleJsonResponse(resp);
+
+    renderBulkTable(data.rows);
+
+    const pct = data.total ? Math.round((data.done / data.total) * 100) : 0;
+    progressBar.style.width = pct + '%';
+    progressEl.textContent = `Processed ${data.done} of ${data.total} URLs (${pct}%)...`;
+
+    // Allow exporting whatever's done so far, even mid-run
+    if (data.done > 0) {
+      exportBtn.style.display = 'inline-block';
+    }
+
+    if (data.status === 'finished') {
+      stopPolling();
+      progressEl.textContent = `Done — processed ${data.done} of ${data.total} URL${data.total === 1 ? '' : 's'}.`;
+      goBulkBtn.disabled = false;
+      goBulkBtn.textContent = 'Process All';
+    }
+  } catch (e) {
+    stopPolling();
+    errorEl.textContent = e.message;
+    goBulkBtn.disabled = false;
+    goBulkBtn.textContent = 'Process All';
+  }
+}
+
+document.getElementById('goBulk').addEventListener('click', async () => {
+  const fileInput = document.getElementById('bulkFile');
+  const errorEl = document.getElementById('error');
+  const progressEl = document.getElementById('bulkProgress');
+  const progressWrap = document.getElementById('progressWrap');
+  const progressBar = document.getElementById('progressBar');
+  const exportBtn = document.getElementById('exportBtn');
+
+  errorEl.textContent = '';
+  progressEl.textContent = '';
+  exportBtn.style.display = 'none';
+  document.getElementById('bulkTableWrap').innerHTML = '';
+  stopPolling();
+
+  if (!fileInput.files.length) { errorEl.textContent = 'Choose a .csv or .txt file.'; return; }
+
+  const btn = document.getElementById('goBulk');
+  btn.disabled = true;
+  btn.textContent = 'Starting...';
+  progressWrap.style.display = 'block';
+  progressBar.style.width = '0%';
+
+  try {
+    const fd = new FormData();
+    fd.append('urls_file', fileInput.files[0]);
+    const resp = await fetch('/bulk_extract/start', { method: 'POST', body: fd });
+    const data = await handleJsonResponse(resp);
+
+    currentJobId = data.job_id;
+    btn.textContent = 'Processing...';
+    progressEl.textContent = `Started — 0 of ${data.total} URLs processed.`;
+
+    pollTimer = setInterval(() => pollJob(currentJobId), 1500);
+    pollJob(currentJobId);
+  } catch (e) {
+    errorEl.textContent = e.message;
+    btn.disabled = false;
+    btn.textContent = 'Process All';
+  }
+});
+
+// Export CSV — pulls directly from the job on the server, so it
+// works even for very large result sets and even while still running.
+document.getElementById('exportBtn').addEventListener('click', () => {
   const errorEl = document.getElementById('error');
   errorEl.textContent = '';
 
-  try {
-    const resp = await fetch('/export', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'text/csv'
-      },
-      body: JSON.stringify({ rows: lastBulkRows }),
-    });
-
-    const contentType = resp.headers.get("content-type");
-    if (contentType && contentType.includes("application/json")) {
-      const data = await resp.json();
-      throw new Error(data.error || 'Export failed');
-    }
-
-    if (!resp.ok) {
-      throw new Error(`Export failed with status ${resp.status}`);
-    }
-
-    const blob = await resp.blob();
-    const downloadUrl = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.style.display = 'none';
-    a.href = downloadUrl;
-    a.download = 'eyeglass_colors_export.csv';
-    
-    document.body.appendChild(a);
-    a.click();
-    
-    window.URL.revokeObjectURL(downloadUrl);
-    a.remove();
-  } catch (e) {
-    errorEl.textContent = e.message;
+  if (!currentJobId) {
+    errorEl.textContent = 'No results to export yet.';
+    return;
   }
+
+  const a = document.createElement('a');
+  a.style.display = 'none';
+  a.href = `/export/${currentJobId}`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 });
 </script>
 </body>
