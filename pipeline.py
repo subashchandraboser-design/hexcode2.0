@@ -1063,6 +1063,64 @@ def color_confidence(
 
 
 # ============================================================
+# OVERALL EXTRACTION CONFIDENCE
+# ============================================================
+
+def overall_extraction_confidence(
+    output: List[Dict],
+    meta: Dict,
+) -> float:
+    """
+    Rolls up all per-color confidence scores into a single 0-1 score for
+    the whole image, so bulk CSV rows can be sorted/filtered by "how much
+    should I trust this row" without inspecting every individual color.
+
+    Weighting:
+      - 75%: confidence of detected colors, with primary regions (frame,
+        bridge, temple, lens) weighted more than secondary accent colors.
+      - 20%: completeness -- did the pipeline actually find a frame, lens,
+        bridge, and temple, or only some of them?
+      - +5% bonus if a real trained YOLO model was used for segmentation
+        instead of the geometric fallback (inherently more reliable).
+    """
+
+    if not output:
+        return 0.0
+
+    primary_prefixes = (
+        "Primary Frame Color",
+        "Bridge Color",
+        "Temple Color",
+        "Lens / Tint Color",
+    )
+
+    weighted_sum = 0.0
+    weight_total = 0.0
+
+    for color in output:
+        label = color.get("label", "")
+        is_primary = any(label.startswith(p) for p in primary_prefixes)
+        weight = 1.5 if is_primary else 0.7
+        weighted_sum += color.get("confidence", 0.0) * weight
+        weight_total += weight
+
+    base_score = weighted_sum / weight_total if weight_total else 0.0
+
+    method_bonus = 0.05 if meta.get("segmentation_method") == "YOLO" else 0.0
+
+    completeness = sum([
+        bool(meta.get("frame_detected")),
+        bool(meta.get("lens_detected")),
+        bool(meta.get("bridge_detected")),
+        bool(meta.get("temple_detected")),
+    ]) / 4.0
+
+    overall = base_score * 0.75 + completeness * 0.20 + method_bonus
+
+    return round(min(1.0, max(0.0, overall)), 3)
+
+
+# ============================================================
 # EXTRACT COLORS FROM MASK
 # ============================================================
 
@@ -1527,6 +1585,8 @@ def extract_colors_from_image(
             else "REMBG + heuristic"
         ),
     }
+
+    meta["overall_confidence"] = overall_extraction_confidence(output, meta)
 
     return (
         output,
