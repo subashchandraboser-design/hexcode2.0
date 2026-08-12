@@ -1,6 +1,5 @@
 import csv
 import io
-import json
 import os
 import threading
 import time
@@ -129,8 +128,8 @@ def colors_to_row(url: str, colors, dimensions, meta, error: str = None) -> dict
             row["primary_frame_confidence"] = conf
 
         elif label.startswith("Frame Color "):
-            frame_extras.append({"label": label, "hex": hexv, "rgb": rgbv,
-                                  "percentage": pct, "confidence": conf})
+            if hexv:
+                frame_extras.append(hexv)
 
         elif label == "Bridge Color":
             row["bridge_hex"] = hexv
@@ -157,8 +156,8 @@ def colors_to_row(url: str, colors, dimensions, meta, error: str = None) -> dict
             row["temple_unknown_confidence"] = conf
 
         elif label.startswith("Temple Accent "):
-            temple_accents.append({"label": label, "hex": hexv, "rgb": rgbv,
-                                    "percentage": pct, "confidence": conf})
+            if hexv:
+                temple_accents.append(hexv)
 
         elif label == "Lens / Tint Color":
             row["tint_hex"] = hexv
@@ -166,8 +165,8 @@ def colors_to_row(url: str, colors, dimensions, meta, error: str = None) -> dict
             row["tint_pct"] = pct
             row["tint_confidence"] = conf
 
-    row["frame_extra_colors"] = json.dumps(frame_extras) if frame_extras else ""
-    row["temple_accents"] = json.dumps(temple_accents) if temple_accents else ""
+    row["frame_extra_colors"] = " | ".join(frame_extras)
+    row["temple_accents"] = " | ".join(temple_accents)
 
     return row
 
