@@ -97,7 +97,7 @@ def extract_colors_from_image(img: Image.Image):
     obj = img_np[top:bottom, left:right]
     obj_mask = fg_mask[top:bottom, left:right]
 
-    lens_mask, non_lens_mask = P.separate_lens_regions(obj_mask)
+    lens_mask, non_lens_mask = P.separate_lens_regions(obj_mask, obj)
 
     # Frame / rim color
     front_rim_region = zone(obj, non_lens_mask, 0.20, 0.65, 0.30, 0.70)
